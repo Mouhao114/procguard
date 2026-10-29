@@ -27,6 +27,6 @@
 
 ## git / 网络
 
-- 本机卡巴斯基默认拦截 SSH 出站（实测 22 端口不通），所以下面这条配置是必需的。`github.com:22` 不通时，`~/.ssh/config` 写 `HostName ssh.github.com` + `Port 443`，`chmod 600`
+- 本机卡巴斯基的**行为防护**会拦截高危行为（实测表现是 SSH 出站连不上），不是按端口黑名单拦的，所以从端口表象看不出原因。
 - `git status --short` 两个字母：`AM` = 暂存后又改过，要再 `git add`
 - commit 前确认二进制、`*.o` 没被加进去
