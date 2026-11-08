@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>serviceWatching</title>
+<!--
+  这个页面只做一件事：把 /api/status 的 JSON 画成卡片。
+
+  数据来源：
+    - 有后端      → GET /api/status（v0.4 之后存在）
+    - 没有后端    → 用下面的 MOCK，页面上会标「演示数据」
+  所以现在直接双击打开也能看到效果，不用等 procguard 写完。
+
+  接后端时只改一个常量：API。
+-->
+<style>
+  :root {
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --line: #e4e8ef;
+    --text: #1c2430;
+    --mute: #7b8697;
+    --accent: #66ccff;
+    --ok: #16a34a;
+    --sleep: #2563eb;
+    --zombie: #dc2626;
+    --stop: #6b7280;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 28px 20px 40px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "HarmonyOS Sans SC", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+  }
+
+  .badge {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--mute);
+    background: #fff;
+  }
+
+  .badge.live { color: var(--ok); border-color: #c7e9d3; background: #f2fbf5; }
+  .badge.mock { color: #b45309; border-color: #f3ddb5; background: #fffaf0; }
+  .badge.stale { color: var(--zombie); border-color: #f3c6c6; background: #fdf3f3; }
+
+  .sub {
+    margin: 0 0 20px;
+    color: var(--mute);
+    font-size: 13px;
+  }
+
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 14px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 16px 14px;
+  }
+
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--stop);
+  }
+
+  .dot.running  { background: var(--ok); box-shadow: 0 0 0 3px rgba(22,163,74,.15); }
+  .dot.sleeping { background: var(--sleep); box-shadow: 0 0 0 3px rgba(37,99,235,.13); }
+  .dot.zombie   { background: var(--zombie); box-shadow: 0 0 0 3px rgba(220,38,38,.15); }
+  .dot.stopped  { background: var(--stop); }
+  .dot.unknown  { background: #cbd5e1; }
+
+  .name { font-weight: 600; font-size: 15px; }
+  .pid  { margin-left: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--mute); }
+
+  .uptime {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 26px;
+    line-height: 1.1;
+    letter-spacing: -0.5px;
+  }
+
+  .state-text { font-size: 12px; color: var(--mute); margin: 2px 0 12px; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+  }
+
+  .stat-label { font-size: 11px; color: var(--mute); }
+  .stat-value { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+
+  .last-exit {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--mute);
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+  }
+
+  .last-exit b { color: var(--text); font-weight: 600; }
+
+  footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 20px;
+    font-size: 12px;
+    color: var(--mute);
+  }
+
+  button {
+    font: inherit;
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  button:hover { border-color: var(--accent); color: #0b7ea8; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  .empty { color: var(--mute); padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>进程监视</h1>
+    <span class="badge" id="source">连接中…</span>
+    <span class="badge" id="stale" hidden>数据陈旧</span>
+  </header>
+  <p class="sub">现在的进程状态</p>
+
+  <div id="grid"><div class="empty">正在读取…</div></div>
+
+  <footer>
+    <span id="updated">—</span>
+    <button id="refresh">刷新</button>
+    <span id="hint"></span>
+  </footer>
+</div>
+
+<script>
+// 接后端时改这里，别的地方不用动。
+const API = '/api/status';
+
+// 刷新间隔：面板在前台时 5 秒，切到后台标签页会自动跳过。
+const INTERVAL_MS = 5000;
+
+// 数据超过这么久没更新，就打「数据陈旧」标记（3 个周期）。
+const STALE_MS = INTERVAL_MS * 3;
+
+// 没连上后端时用的演示数据。形状必须和 /api/status 完全一致，
+// 否则接上后端那天页面会突然缺字段。
+function mockStatus() {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    now,
+    services: [
+      {
+        name: 'yunzai',
+        pid: 4821,
+        state: 'running',
+        uptime_sec: 3600,
+        restarts: 3,
+        last_exit: { code: 1, signal: null, at: now - 3610 },
+        cpu_pct: 1.4,
+        rss_kb: 24000
+      },
+      {
+        name: 'web',
+        pid: 5102,
+        state: 'sleeping',
+        uptime_sec: 187,
+        restarts: 0,
+        last_exit: null,
+        cpu_pct: 0.0,
+        rss_kb: 8120
+      },
+      {
+        name: 'indexer',
+        pid: 6140,
+        state: 'zombie',
+        uptime_sec: 0,
+        restarts: 12,
+        last_exit: { code: null, signal: 11, at: now - 42 },
+        cpu_pct: null,
+        rss_kb: null
+      },
+      {
+        name: 'backup',
+        pid: null,
+        state: 'stopped',
+        uptime_sec: 0,
+        restarts: 7,
+        last_exit: { code: 2, signal: null, at: now - 86400 },
+        cpu_pct: null,
+        rss_kb: null
+      }
+    ]
+  };
+}
+
+const SIGNALS = {
+  1: 'SIGHUP', 2: 'SIGINT', 3: 'SIGQUIT', 6: 'SIGABRT', 9: 'SIGKILL',
+  11: 'SIGSEGV', 13: 'SIGPIPE', 15: 'SIGTERM'
+};
+
+const STATE_TEXT = {
+  running: '运行中',
+  sleeping: '休眠中',
+  zombie: '僵尸（未被回收）',
+  stopped: '已停止',
+  unknown: '未知'
+};
+
+const el = {
+  grid: document.getElementById('grid'),
+  source: document.getElementById('source'),
+  stale: document.getElementById('stale'),
+  updated: document.getElementById('updated'),
+  hint: document.getElementById('hint'),
+  refresh: document.getElementById('refresh')
+};
+
+let lastNow = null;
+let inFlight = false;
+let timer = null;
+
+// 3600 → "1 小时 0 分"；不够一小时就 "12 分 30 秒"
+function fmtUptime(sec) {
+  if (sec === null || sec === undefined) return '—';
+  sec = Math.max(0, Math.floor(sec));
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (d > 0) return d + ' 天 ' + h + ' 小时';
+  if (h > 0) return h + ' 小时 ' + m + ' 分';
+  if (m > 0) return m + ' 分 ' + s + ' 秒';
+  return s + ' 秒';
+}
+
+function fmtRss(kb) {
+  if (kb === null || kb === undefined) return '—';
+  if (kb >= 1024 * 1024) return (kb / 1024 / 1024).toFixed(1) + ' GB';
+  if (kb >= 1024) return (kb / 1024).toFixed(1) + ' MB';
+  return kb + ' KB';
+}
+
+function fmtClock(unix) {
+  if (!unix) return '—';
+  const d = new Date(unix * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function fmtAgo(unix) {
+  if (!unix) return '';
+  const diff = Math.max(0, Math.floor(Date.now() / 1000) - unix);
+  if (diff < 60) return diff + ' 秒前';
+  if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+  if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+  return Math.floor(diff / 86400) + ' 天前';
+}
+
+function exitText(last) {
+  if (!last) return '上次退出：—';
+  let what;
+  if (last.code !== null && last.code !== undefined) {
+    what = '退出码 ' + last.code;
+  } else if (last.signal) {
+    const nm = SIGNALS[last.signal] || ('信号 ' + last.signal);
+    what = nm + '（' + last.signal + '）';
+  } else {
+    what = '未知';
+  }
+  return '上次退出：' + what + ' · ' + fmtClock(last.at) + '（' + fmtAgo(last.at) + '）';
+}
+
+function card(s) {
+  const state = STATE_TEXT[s.state] ? s.state : 'unknown';
+  const div = document.createElement('div');
+  div.className = 'card';
+
+  const head = document.createElement('div');
+  head.className = 'card-head';
+  head.innerHTML =
+    '<span class="dot ' + state + '"></span>' +
+    '<span class="name"></span>' +
+    '<span class="pid"></span>';
+  head.querySelector('.name').textContent = s.name || '(未命名)';
+  head.querySelector('.pid').textContent = s.pid === null || s.pid === undefined ? 'pid —' : 'pid ' + s.pid;
+
+  const up = document.createElement('div');
+  up.className = 'uptime';
+  // 僵尸和已停止的进程没有“运行时长”这回事，显示 0 秒会误导
+  const alive = state === 'running' || state === 'sleeping' || state === 'unknown';
+  up.textContent = alive ? fmtUptime(s.uptime_sec) : '—';
+
+  const st = document.createElement('div');
+  st.className = 'state-text';
+  st.textContent = STATE_TEXT[state];
+
+  const stats = document.createElement('div');
+  stats.className = 'stats';
+  const cells = [
+    ['重启', String(s.restarts ?? 0)],
+    ['CPU', s.cpu_pct === null || s.cpu_pct === undefined ? '—' : s.cpu_pct.toFixed(1) + '%'],
+    ['内存', fmtRss(s.rss_kb)]
+  ];
+  for (const [k, v] of cells) {
+    const c = document.createElement('div');
+    c.innerHTML = '<div class="stat-label"></div><div class="stat-value"></div>';
+    c.querySelector('.stat-label').textContent = k;
+    c.querySelector('.stat-value').textContent = v;
+    stats.appendChild(c);
+  }
+
+  const le = document.createElement('div');
+  le.className = 'last-exit';
+  le.textContent = exitText(s.last_exit);
+
+  div.append(head, up, st, stats, le);
+  return div;
+}
+
+function render(data) {
+  const list = Array.isArray(data.services) ? data.services : [];
+
+  el.grid.replaceChildren();
+  if (list.length === 0) {
+    const d = document.createElement('div');
+    d.className = 'empty';
+    d.textContent = '没有在守护的服务';
+    el.grid.appendChild(d);
+  } else {
+    // 先按状态排一下：僵尸和停止的排前面，出问题的先看见
+    const order = { zombie: 0, stopped: 1, unknown: 2, sleeping: 3, running: 4 };
+    list.slice()
+      .sort((a, b) => (order[a.state] ?? 9) - (order[b.state] ?? 9))
+      .forEach(s => el.grid.appendChild(card(s)));
+  }
+
+  lastNow = data.now || Math.floor(Date.now() / 1000);
+  el.updated.textContent = '更新于 ' + fmtClock(lastNow);
+}
+
+function markSource(kind) {
+  el.source.className = 'badge ' + kind;
+  if (kind === 'live') {
+    el.source.textContent = '实时数据';
+    el.hint.textContent = '';
+  } else if (kind === 'mock') {
+    el.source.textContent = '演示数据（未连后端）';
+    el.hint.textContent = '后端就绪后把 API 指向 /api/status 即可';
+  }
+}
+
+function checkStale() {
+  if (lastNow === null) return;
+  const age = Date.now() - lastNow * 1000;
+  el.stale.hidden = age <= STALE_MS;
+}
+
+async function load() {
+  if (inFlight) return;
+  inFlight = true;
+  el.refresh.disabled = true;
+
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 3000);
+    const r = await fetch(API, { signal: ctrl.signal, cache: 'no-store' });
+    clearTimeout(t);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+    markSource('live');
+  } catch (e) {
+    // 没有任何后端时（直接 file:// 打开、或 v0.4 还没做）走这里，不是错误。
+    render(mockStatus());
+    markSource('mock');
+  } finally {
+    inFlight = false;
+    el.refresh.disabled = false;
+    checkStale();
+    schedule();
+  }
+}
+
+// 用 setTimeout 递归而不是 setInterval：
+// 上一次没回来就绝不会发下一次，慢的时候不会堆一串请求。
+function schedule() {
+  clearTimeout(timer);
+  if (document.hidden) return; // 标签页在后台就不刷，切回来时立即补一次
+  timer = setTimeout(load, INTERVAL_MS);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    clearTimeout(timer);
+  } else {
+    load();
+  }
+});
+
+el.refresh.addEventListener('click', load);
+
+load();
+</script>
+</body>
+</html>
