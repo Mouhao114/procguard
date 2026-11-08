@@ -63,7 +63,7 @@ int main(int argc, char* argv[]) {
         if (g_stop) {
             break;
         }
-        sleep(delay);
+
         if (ran > 60) {
             delay = 1;
         } else {
@@ -71,6 +71,7 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "[delay] 本轮子进程存活 " << ran << " 秒，下一轮等待 " << delay << " 秒"
                   << std::endl;
+        sleep(delay);
     }
     std::cout << "[main] 收到停止信号，正常退出" << std::endl;
     return 0;
