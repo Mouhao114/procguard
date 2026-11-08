@@ -11,13 +11,17 @@ volatile sig_atomic_t g_stop = 0;
 
 void on_signal(int);
 
-int main() {
+int main(int argc, char* argv[]) {
     struct sigaction sa;
     sa.sa_handler = on_signal;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, nullptr);
     int delay = 1;
+    if (argc < 2) {
+        std::cerr << "usage: procguard <command> [args...]\n";
+        return 1;
+    }
     while (!g_stop) {
         pid_t pid = fork();
         int startTime = time(nullptr);
@@ -27,8 +31,8 @@ int main() {
             return 1;
         } else if (pid == 0) {
             setpgid(0, 0);
-            execl("/bin/sh", "sh", "-c", "sleep 5; exit 3", nullptr);
-            std::cout << "会打印吗?" << " " << std::endl;
+            execvp(argv[1], &argv[1]);
+            perror("execvp");
             _exit(127);
         } else {
             setpgid(pid, pid);
@@ -54,7 +58,7 @@ int main() {
         if (WIFEXITED(status)) {
             std::cout << "子进程正常退出，退出码=" << WEXITSTATUS(status) << std::endl;
         } else {
-            std::cout << "子进程被信号 " << WTERMSIG(status) << "kill" << std::endl;
+            std::cout << "子进程被信号 " << WTERMSIG(status) << " kill" << std::endl;
         }
         if (g_stop) {
             break;
@@ -73,5 +77,5 @@ int main() {
 }
 
 void on_signal(int) {
-    g_stop = 1; // ← 处理函数改它
+    g_stop = 1;
 }

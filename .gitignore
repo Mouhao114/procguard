@@ -3,5 +3,5 @@ build/
 *.out
 procguard
 fork101
-pcgexplain.cpp
-pcgexplain
+pcgexplain*
+crasher
