@@ -1,5 +1,14 @@
 # procguard 开发笔记
 
+## v0.3随手记
+
+虽然在VScode里"Ctrl+F"找不到"\r" //开发环境Win11+VScode
+但是在别的文件系统中好像能找到，得写个小细则把它屏蔽掉
+`if (!line.empty() && line.back() == '\r') line.pop_back();`
+这样就能屏蔽掉其他不可见字节了
+
+
+
 
 ## v0.3 配置格式
 
