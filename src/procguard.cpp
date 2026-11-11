@@ -3,14 +3,13 @@
 #include <csignal>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
-#include <string>
-#include <fstream>
-#include <sstream>
-
 
 volatile sig_atomic_t g_stop = 0;
 
@@ -30,34 +29,61 @@ int main(int argc, char* argv[]) {
     }
     if (std::string(argv[1]) == "-c") {
         if (argc < 3) {
-            std::cerr<<"usage: procguard -c <config>\n";
-            return 1; 
+            std::cerr << "usage: procguard -c <config>\n";
+            return 1;
         }
         std::ifstream in(argv[2]);
-    if (!in) {
-    std::cerr << "cannot open: " << argv[2] << "\n";
-    return 1;
+        if (!in) {
+            std::cerr << "cannot open: " << argv[2] << "\n";
+            return 1;
+        }
+        std::string line;
+        int lineno = 0;
+        while (std::getline(in, line)) {
+            ++lineno;
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            if (line.empty() || line[0] == '#')
+                continue;
+            // [xxx] → 认下 section，continue
+            if(line.front() == '[' && line.back() == ']'){
+                continue;
+            }   
+            // 走到这里，这行应该是 key=value
+            auto eq = line.find('=');
+            if (eq == std::string::npos) {
+                std::cerr << "line " << lineno << ": missing '='\n";
+                return 1; 
+            }
+            std::string key = line.substr(0, eq);
+            std::string value = line.substr(eq + 1);
+            if (key == "command") {
+                if (value.empty()) {
+                    std::cerr << "line " << lineno << ": command is empty\n";
+                    return 1;
+                }
+                std::istringstream iss(value);
+                std::string w;
+                while (iss >> w) cmd.push_back(w);
+            } else if (key == "max_delay") {
+                continue;
+                // 先存着，暂时不用
+            } else {
+                std::cerr << "Warning:unknown keys: " << key << "\n";
+                continue;
+            }
+        }
+        if (cmd.empty()) {
+            std::cerr << "missing required field: command\n";
+            return 1;
+        }
+    } else {
+        for (int i = 1; i < argc; ++i)
+            cmd.push_back(argv[i]);
     }
-
-    std::string line;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();  
-            if (line.empty() || line[0] == '#') continue;               
-                if (line.rfind("command=", 0) == 0) {                       
-                    std::istringstream iss(line.substr(8));                 
-                    std::string w;
-                    while (iss >> w) cmd.push_back(w);
-                }   
-}
-    if (cmd.empty()) {
-    std::cerr << "no command in " << argv[2] << "\n";
-    return 1;
-    }   
-} else {
-    for (int i = 1; i < argc; ++i) cmd.push_back(argv[i]);
-}
     std::vector<char*> cargv;
-    for (auto& s : cmd) cargv.push_back(s.data());
+    for (auto& s : cmd)
+        cargv.push_back(s.data());
     cargv.push_back(nullptr);
     while (!g_stop) {
         pid_t pid = fork();
@@ -105,7 +131,6 @@ int main(int argc, char* argv[]) {
             delay = 1;
         } else {
             delay = std::min(delay * 2, 30);
-            std::cout<<"Waiting"<<delay;
         }
         std::cout << "[delay] 本轮子进程存活 " << ran << " 秒，下一轮等待 " << delay << " 秒"
                   << std::endl;
