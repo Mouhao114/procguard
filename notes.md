@@ -1,5 +1,17 @@
 # procguard 开发笔记
 
+
+## v0.3 配置格式
+
+[service.demo]
+command=/bin/sleep 30
+max_delay=30
+
+- command 必填，按空格切 argv
+- max_delay 可选，默认 30
+- 未知 key 警告不退出
+- 错误必须带行号
+
 ## 系统调用（`man 2 xxx`，不是第 3 节）
 
 | 调用 | 一句话 | 容易踩的坑 |
