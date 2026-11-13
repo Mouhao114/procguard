@@ -10,6 +10,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
+#include <stdexcept>
 
 volatile sig_atomic_t g_stop = 0;
 
@@ -22,6 +23,7 @@ int main(int argc, char* argv[]) {
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, nullptr);
     int delay = 1;
+    int max_delay = 30;
     std::vector<std::string> cmd;
     if (argc < 2) {
         std::cerr << "usage: procguard <command> [args...]\n";
@@ -45,11 +47,9 @@ int main(int argc, char* argv[]) {
                 line.pop_back();
             if (line.empty() || line[0] == '#')
                 continue;
-            // [xxx] → 认下 section，continue
             if(line.front() == '[' && line.back() == ']'){
                 continue;
             }   
-            // 走到这里，这行应该是 key=value
             auto eq = line.find('=');
             if (eq == std::string::npos) {
                 std::cerr << "line " << lineno << ": missing '='\n";
@@ -66,8 +66,19 @@ int main(int argc, char* argv[]) {
                 std::string w;
                 while (iss >> w) cmd.push_back(w);
             } else if (key == "max_delay") {
-                continue;
-                // 先存着，暂时不用
+                try { max_delay = std::stoi(value); }
+                catch (const std::invalid_argument& outPuts){
+                    std::cerr<<"line "<<lineno<<": max_delay is not a number:"<<outPuts.what()<<"\n";
+                    return 1;
+                } 
+                catch (const std::out_of_range& outPut2){
+                    std::cerr<<"line "<<lineno<<": max_delay is out of range:"<<outPut2.what()<<"\n";
+                    return 1;
+                }     
+                if (max_delay < 1){
+                    std::cerr<<"line "<<lineno<<": max_delay must be >= 1\n";
+                    return 1;
+                } 
             } else {
                 std::cerr << "Warning:unknown keys: " << key << "\n";
                 continue;
@@ -126,15 +137,12 @@ int main(int argc, char* argv[]) {
         if (g_stop) {
             break;
         }
-
         if (ran > 60) {
             delay = 1;
-        } else {
-            delay = std::min(delay * 2, 30);
-        }
-        std::cout << "[delay] 本轮子进程存活 " << ran << " 秒，下一轮等待 " << delay << " 秒"
-                  << std::endl;
+        } 
+        std::cout << "[delay] 本轮子进程存活 " << ran << " 秒，下一轮等待 " << delay << " 秒"<< std::endl;
         sleep(delay);
+        delay = std::min(delay * 2, max_delay); 
     }
     std::cout << "[main] 收到停止信号，正常退出" << std::endl;
     return 0;
