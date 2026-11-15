@@ -41,7 +41,7 @@ max_delay=10
 command=/bin/sh /home/user/run.sh
 ```
 
-写错时打印行号并以 1 退出；未知字段只警告、继续执行。整份文件读完仍没有 `command` 时，报 `missing required field: command`。多服务将在 v0.3.1 支持。
+写错时打印行号并以 1 退出；未知字段只警告、继续执行。整份文件读完仍没有 `command` 时，报 `missing required field: command`。多服务支持将在未来版本提供。
 
 ## 构建
 
@@ -57,7 +57,7 @@ make release  # -O2 -DNDEBUG
 
 - **重启**：被守护的命令退出后自动重启
 - **退避**：1 → 2 → 4 → … → `max_delay` 封顶。子进程单次存活超过 60 秒时，退避重置回 1 秒——崩得越频繁等得越久，跑得住的不惩罚
-- **停止**：收到 `SIGINT` 后向子进程组发 `SIGTERM`、回收、退出，退出码 0。不把收到的 `SIGINT` 原样透传下去，怎么收尾由自己决定
+- **停止**：收到 `SIGINT` 或 `SIGTERM` 后向子进程组发 `SIGTERM`、回收、退出，退出码 0。不把收到的停止信号原样透传下去，怎么收尾由自己决定
 
 ## 测试
 
@@ -77,6 +77,5 @@ make demo           # 编译并直接守护它，Ctrl+C 停止
 - 没有指标端点，看不到历史重启记录
 - 日志只往 stdout 走，不落盘也不轮转；长期挂着得自己重定向
 - 改配置要重启进程，没有 reload
-- 只处理 `SIGINT`。被 `SIGTERM` 杀掉时子进程不会被清理，会变成孤儿
 - 停止时向子进程组发 `SIGTERM` 后阻塞等待，没有超时也没有后续的 `SIGKILL`。子进程不理 `SIGTERM`（或进程组里还卡着孙进程）会把 procguard 挂住，只能手动结束它和残留的子进程
 - procguard 自己挂了没人拉起——真要部署得交给 systemd
