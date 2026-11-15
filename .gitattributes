@@ -1,0 +1,3 @@
+# Watcher.html 是计划中 Web 面板的界面原型，不是项目实现的一部分。
+# 不排除的话 GitHub 会把本仓库的主语言判成 HTML（12.5KB > 全部 C++ 源码之和）。
+Watcher.html linguist-detectable=false
