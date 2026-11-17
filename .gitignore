@@ -4,6 +4,7 @@ build/
 procguard
 fork101
 crasher
+http_smoke
 *explain*
 
 /procguard_*
