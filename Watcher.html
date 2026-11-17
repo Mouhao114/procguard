@@ -77,6 +77,38 @@
     font-size: 13px;
   }
 
+  /* 顶部告警条：任何时候都在页面里，不依赖通知权限 */
+  .alert {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 18px;
+    padding: 11px 14px;
+    border: 1px solid #f3c6c6;
+    border-left: 3px solid var(--zombie);
+    background: #fdf3f3;
+    border-radius: 10px;
+    color: #8a1f1f;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .alert[hidden] { display: none; }
+
+  .alert .pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--zombie);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: .3; }
+  }
+
   #grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -89,6 +121,14 @@
     border-radius: 12px;
     padding: 16px 16px 14px;
   }
+
+  /* 重启超阈值的卡片，左边压一条红线，扫一眼就能找到 */
+  .card.hot {
+    border-color: #f3c6c6;
+    box-shadow: inset 3px 0 0 var(--zombie);
+  }
+
+  .stat-value.hot { color: var(--zombie); font-weight: 600; }
 
   .card-head {
     display: flex;
@@ -179,11 +219,17 @@
   </header>
   <p class="sub">现在的进程状态</p>
 
+  <div class="alert" id="alert" hidden>
+    <span class="pulse"></span>
+    <span id="alert-text"></span>
+  </div>
+
   <div id="grid"><div class="empty">正在读取…</div></div>
 
   <footer>
     <span id="updated">—</span>
     <button id="refresh">刷新</button>
+    <button id="notify">开启系统通知</button>
     <span id="hint"></span>
   </footer>
 </div>
@@ -197,6 +243,11 @@ const INTERVAL_MS = 5000;
 
 // 数据超过这么久没更新，就打「数据陈旧」标记（3 个周期）。
 const STALE_MS = INTERVAL_MS * 3;
+
+// 同一个服务的重启次数超过这个值，判定为崩溃循环，页面告警 + 尝试弹系统通知。
+// 60 不是拍的：procguard 自己的退避重置阈值就是「稳定运行超过 60 秒」，
+// 所以一个连续重启 60 次都没撑过 60 秒的服务，基本可以确定起不来。
+const RESTART_LIMIT = 60;
 
 // 没连上后端时用的演示数据。形状必须和 /api/status 完全一致，
 // 否则接上后端那天页面会突然缺字段。
@@ -230,7 +281,7 @@ function mockStatus() {
         pid: 6140,
         state: 'zombie',
         uptime_sec: 0,
-        restarts: 12,
+        restarts: 63,
         last_exit: { code: null, signal: 11, at: now - 42 },
         cpu_pct: null,
         rss_kb: null
@@ -266,9 +317,12 @@ const el = {
   grid: document.getElementById('grid'),
   source: document.getElementById('source'),
   stale: document.getElementById('stale'),
+  alert: document.getElementById('alert'),
+  alertText: document.getElementById('alert-text'),
   updated: document.getElementById('updated'),
   hint: document.getElementById('hint'),
-  refresh: document.getElementById('refresh')
+  refresh: document.getElementById('refresh'),
+  notify: document.getElementById('notify')
 };
 
 let lastNow = null;
@@ -326,10 +380,103 @@ function exitText(last) {
   return '上次退出：' + what + ' · ' + fmtClock(last.at) + '（' + fmtAgo(last.at) + '）';
 }
 
+/* ---------- 重启超限告警 ---------- */
+
+// 已经弹过系统通知的服务名。同一个服务只在跨过阈值那一刻响一次：
+// 面板每 5 秒轮询一次，不做去重的话通知会堆成一座山。
+const notified = new Set();
+
+// 有些环境里系统通知必然失败（安卓 Chrome 禁止页面直接构造 Notification，
+// 必须走 ServiceWorker）。失败一次就不再重试，省得往控制台刷屏。
+let notifyBroken = false;
+
+function notifySupported() {
+  return typeof Notification !== 'undefined';
+}
+
+// 返回 true 表示真的弹出去了，调用方才记进 notified。
+// 返回 false 不代表"没事发生"——页面顶部的横幅永远在，它才是保底。
+function systemNotify(s) {
+  if (notifyBroken || !notifySupported()) return false;
+  if (Notification.permission !== 'granted') return false;
+
+  try {
+    const n = new Notification('procguard 告警', {
+      body: s.name + ' 已重启 ' + s.restarts + ' 次，可能陷入了崩溃循环',
+      tag: 'procguard-' + s.name,  // 同一个 tag 覆盖上一条，不会越堆越多
+      requireInteraction: true     // 桌面端：不自动消失，等人点掉
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+    return true;
+  } catch (e) {
+    notifyBroken = true;
+    console.warn('系统通知不可用：', e);
+    return false;
+  }
+}
+
+function evaluateAlerts(list) {
+  const hot = list.filter(s => Number(s.restarts ?? 0) > RESTART_LIMIT);
+
+  // 掉回阈值以下就撤销记录，下次再冲上去还能再响一次
+  for (const name of [...notified]) {
+    if (!hot.some(s => s.name === name)) notified.delete(name);
+  }
+
+  if (hot.length === 0) {
+    el.alert.hidden = true;
+  } else {
+    el.alert.hidden = false;
+    el.alertText.textContent =
+      hot.map(s => s.name + ' 已重启 ' + s.restarts + ' 次').join('，') +
+      '（阈值 ' + RESTART_LIMIT + ' 次，疑似崩溃循环）';
+  }
+
+  for (const s of hot) {
+    if (notified.has(s.name)) continue;
+    if (systemNotify(s)) notified.add(s.name);
+  }
+}
+
+function syncNotifyBtn() {
+  if (!notifySupported()) {
+    el.notify.hidden = true;
+    el.hint.textContent = '这个浏览器不支持系统通知，只能看页面告警';
+    return;
+  }
+  const p = Notification.permission;
+  if (p === 'granted') {
+    el.notify.textContent = '系统通知已开启';
+    el.notify.disabled = true;
+  } else if (p === 'denied') {
+    el.notify.textContent = '系统通知被拒绝';
+    el.notify.disabled = true;
+    el.hint.textContent = location.protocol === 'file:'
+      ? 'file:// 拿不到通知权限，用 python -m http.server 起个本地服务再打开'
+      : '在地址栏左侧的站点设置里重新允许通知';
+  } else {
+    el.notify.textContent = '开启系统通知';
+    el.notify.disabled = false;
+  }
+}
+
+el.notify.addEventListener('click', async () => {
+  // 必须在用户手势里调用，否则 Chrome 直接判 denied
+  try {
+    await Notification.requestPermission();
+  } catch (e) {
+    console.warn('请求通知权限失败：', e);
+  }
+  syncNotifyBtn();
+  load();  // 刚授权成功的话，立刻按当前数据补判一次
+});
+
 function card(s) {
   const state = STATE_TEXT[s.state] ? s.state : 'unknown';
+  const restarts = Number(s.restarts ?? 0);
+  const hotRestart = restarts > RESTART_LIMIT;
   const div = document.createElement('div');
-  div.className = 'card';
+  div.className = 'card' + (hotRestart ? ' hot' : '');
 
   const head = document.createElement('div');
   head.className = 'card-head';
@@ -353,15 +500,17 @@ function card(s) {
   const stats = document.createElement('div');
   stats.className = 'stats';
   const cells = [
-    ['重启', String(s.restarts ?? 0)],
-    ['CPU', s.cpu_pct === null || s.cpu_pct === undefined ? '—' : s.cpu_pct.toFixed(1) + '%'],
-    ['内存', fmtRss(s.rss_kb)]
+    ['重启', String(restarts), hotRestart],
+    ['CPU', s.cpu_pct === null || s.cpu_pct === undefined ? '—' : s.cpu_pct.toFixed(1) + '%', false],
+    ['内存', fmtRss(s.rss_kb), false]
   ];
-  for (const [k, v] of cells) {
+  for (const [k, v, hot] of cells) {
     const c = document.createElement('div');
     c.innerHTML = '<div class="stat-label"></div><div class="stat-value"></div>';
     c.querySelector('.stat-label').textContent = k;
-    c.querySelector('.stat-value').textContent = v;
+    const val = c.querySelector('.stat-value');
+    val.textContent = v;
+    if (hot) val.classList.add('hot');
     stats.appendChild(c);
   }
 
@@ -392,6 +541,8 @@ function render(data) {
 
   lastNow = data.now || Math.floor(Date.now() / 1000);
   el.updated.textContent = '更新于 ' + fmtClock(lastNow);
+
+  evaluateAlerts(list);
 }
 
 function markSource(kind) {
@@ -454,6 +605,7 @@ document.addEventListener('visibilitychange', () => {
 
 el.refresh.addEventListener('click', load);
 
+syncNotifyBtn();
 load();
 </script>
 </body>
