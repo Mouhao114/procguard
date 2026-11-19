@@ -17,6 +17,13 @@ volatile sig_atomic_t g_stop = 0;
 
 void on_signal(int);
 
+std::string trim(const std::string& s){
+        size_t begin = s.find_first_not_of(" \t");
+        if (begin == std::string::npos) return "";
+        size_t end = s.find_last_not_of(" \t");
+        return s.substr(begin, end - begin + 1);
+    }
+
 int main(int argc, char* argv[]) {
     struct sigaction sa;
     sa.sa_handler = on_signal;
@@ -26,7 +33,7 @@ int main(int argc, char* argv[]) {
     sigaction(SIGTERM, &sa, nullptr);
     int delay = 1;
     int max_delay = 30;
-    std::vector<std::string> cmd;
+    std::vector<std::string> cmd;  
     if (argc < 2) {
         std::cerr << "usage: procguard <command> [args...]\n";
         return 1;
@@ -43,13 +50,16 @@ int main(int argc, char* argv[]) {
         }
         std::string line;
         int lineno = 0;
+        bool saw_command=false;
         while (std::getline(in, line)) {
             ++lineno;
             if (!line.empty() && line.back() == '\r')
                 line.pop_back();
-            if (line.empty() || line[0] == '#')
+            if (line.empty() || line[0] == '#'){
                 continue;
+            }
             if (line.front() == '[' && line.back() == ']') {
+                std::cerr<<"line "<<lineno<<": bracket section header is not supported\n";
                 continue;
             }
             auto eq = line.find('=');
@@ -57,9 +67,18 @@ int main(int argc, char* argv[]) {
                 std::cerr << "line " << lineno << ": missing '='\n";
                 return 1;
             }
-            std::string key = line.substr(0, eq);
-            std::string value = line.substr(eq + 1);
+            std::string key   = trim(line.substr(0, eq));
+            std::string value = trim(line.substr(eq + 1));
+            if(key.empty()){
+                std::cerr<<"line "<<lineno<<": missing key name\n";
+                return 1;
+            }
             if (key == "command") {
+                if(saw_command){
+                    std::cerr<<"line "<<lineno<<": command already defined\n";
+                    return 1;
+                }
+                saw_command=true;
                 if (value.empty()) {
                     std::cerr << "line " << lineno << ": command is empty\n";
                     return 1;
