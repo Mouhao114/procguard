@@ -2,7 +2,7 @@
 
 进程守护：命令退出就自动重启，指数退避，Ctrl+C 时清理整个进程组。
 
-当前版本 v0.3.1
+当前版本 v0.3.2
 
 ## 用法
 
@@ -23,7 +23,6 @@ procguard -c <config>              # 命令从配置文件读
 
 ```
 # 以 # 开头的行和空行会被忽略
-[service.demo]
 command=/bin/sleep 5
 max_delay=10
 ```
@@ -31,7 +30,9 @@ max_delay=10
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `command` | 是 | 按空格切成 argv，交给 `execvp` |
-| `max_delay` | 否 | 退避上限（秒），默认 30，必须 ≥ 1 |
+| `max_delay` | 否 | 退避上限（秒），默认 30，取值 1–3600 |
+
+`=` 两端的空格和 tab 会被忽略，`command = /bin/echo hi` 与 `command=/bin/echo hi` 等价。
 
 `command` 只按空格切分，**不解析引号**。所以 `command=/bin/echo "hello world"` 得到的是三个参数（`/bin/echo`、`"hello`、`world"`），不是两个。
 
@@ -41,7 +42,25 @@ max_delay=10
 command=/bin/sh /home/user/run.sh
 ```
 
-写错时打印行号并以 1 退出；未知字段只警告、继续执行。整份文件读完仍没有 `command` 时，报 `missing required field: command`。多服务支持将在未来版本提供。
+写错时打印行号并以 1 退出：
+
+| 信息 | 触发条件 |
+|---|---|
+| `line N: missing '='` | 该行没有等号 |
+| `line N: missing key name` | 等号左边为空 |
+| `line N: command is empty` | `command` 的值为空 |
+| `line N: command already defined` | `command` 出现第二次 |
+| `line N: max_delay is not a number` | 值不是整数 |
+| `line N: max_delay is out of range` | 整数超出 `int` 范围 |
+| `line N: max_delay must be >= 1` | 小于 1 |
+| `line N: max_delay must be <= 3600` | 大于 3600 |
+
+以下情况只警告、不中止：
+
+- `warning: unknown key 'xxx'` —— 不认识的字段，跳过该行
+- `line N: bracket section header is not supported` —— 方括号行被跳过
+
+整份文件读完仍没有 `command` 时，报 `missing required field: command` 并以 1 退出。**多服务支持将在未来版本提供**，届时方括号节头才会被真正解析。
 
 ## 构建
 
@@ -74,8 +93,8 @@ make demo           # 编译并直接守护它，Ctrl+C 停止
 
 - 被守护的命令不存在或没有执行权限时，`execvp` 失败（退出码 127），procguard 当作普通退出处理，继续按退避重启，不会放弃。区别只体现在日志里的退出码
 - 没有健康检查：进程卡住不退出（死锁）时发现不了
-- 没有指标端点，看不到历史重启记录
-- Web 面板尚未实现：`Watcher.html` 是界面原型，设计上接 `/api/status` 的 JSON 画成卡片；现在双击打开看到的是演示数据，**真实后端将在未来提供**
+- `/api/status` 的实现已就绪（`src/http.cpp`、`src/status.h`），但**尚未接入主循环**，运行中的进程不监听任何端口
+- `Watcher.html` 是面板前端，设计上从 `/api/status` 取 JSON 渲染卡片；当前打开只能看到演示数据
 - 日志只往 stdout 走，不落盘也不轮转；长期挂着得自己重定向
 - 改配置要重启进程，没有 reload
 - 停止时向子进程组发 `SIGTERM` 后阻塞等待，没有超时也没有后续的 `SIGKILL`。子进程不理 `SIGTERM`（或进程组里还卡着孙进程）会把 procguard 挂住，只能手动结束它和残留的子进程
